@@ -42,7 +42,7 @@ public class Main {
         while (true) {
             System.out.println("\nКоманда:\n[A]dd, [L]ist, [R]emove, [C]omplete"
                     + "\n[U]ncompleted, [O]verdue, [S]earch"
-                    + "\n[D]ueSort, [P]rioSort, [G]roup"
+                    + "\n[D]ueSort, [P]rioSort, [G]roup, [T]otal"
                     + "\n[SV] Save, [LD] Load, [Q]uit");
             String cmd = scan.nextLine().trim().toUpperCase();
 
@@ -83,7 +83,6 @@ public class Main {
                     }
                     break;
 
-
                 case "U":
                     System.out.println("Незавершенные задачи:\n");
                     manager.getUncompletedTasks().forEach(System.out::println);
@@ -102,12 +101,12 @@ public class Main {
                     manager.searchTasks(keyWord).forEach(System.out::println);
                     break;
 
-                case "DU":
+                case "D":
                     System.out.println("Задачи, отсортированные по дате:");
                     manager.sortByDueDates().forEach(System.out::println);
                     break;
 
-                case "PR":
+                case "P":
                     System.out.println("Задачи, отсортированные по приоритету:");
                     manager.sortByPriority().forEach(System.out::println);
                     break;
@@ -119,6 +118,16 @@ public class Main {
                         list.forEach(System.out::println);
                     });
                     break;
+
+                case "T":
+                    System.out.println("Общая информация:");
+                    long total = manager.getAllTasks().size();
+                    long done = manager.getCompletedTasks().size();
+                    long undone = manager.getUncompletedTasks().size();
+                    long overdue = manager.getAllTasks().stream()
+                                          .filter(task -> !task.isCompleted() && task.getDueDate().isBefore(LocalDate.now()))
+                                          .count();
+                    System.out.printf("Всего: %d | Выполнено: %d | Ожидают: %d | Просрочено: %d%n", total, done, undone, overdue);
 
                 case "SV":
                     System.out.print("Сохранить как: ");
