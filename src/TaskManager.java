@@ -1,3 +1,8 @@
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -6,6 +11,7 @@ import java.util.stream.Collectors;
 
 public class TaskManager {
     private final List<Task> tasks = new ArrayList<>();
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public void addTask(Task task) {
         tasks.add(task);
@@ -65,5 +71,26 @@ public class TaskManager {
     public Map<Priority,List<Task>> groupByPriority(){
         return tasks.stream()
                 .collect(Collectors.groupingBy(Task::getPriority));
+    }
+
+    public void saveToFile(String filename) throws IOException {
+        mapper.findAndRegisterModules(); // для поддержки LocalDate
+        mapper.writeValue(new File(filename), tasks);
+    }
+
+    public void loadFromFile(String filename) throws IOException{
+        mapper.findAndRegisterModules();
+        List<Task> loaded = mapper.readValue(
+                new File(filename),
+                new TypeReference<List<Task>>() {}
+        );
+        tasks.clear();
+        tasks.addAll(loaded);
+
+        int maxID = loaded.stream()
+                .mapToInt(Task::getId)
+                .max()
+                .orElse(0);
+        Task.setCounter(maxID);
     }
 }
