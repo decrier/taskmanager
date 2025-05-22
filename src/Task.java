@@ -3,20 +3,26 @@ import java.time.LocalDate;
 public class Task {
     private static int counter = 0;
 
-    private final int id;
+    private int id;
     private String title;
     private String description;
     private LocalDate dueDate;
     private Priority priority;
     private boolean isCompleted;
 
-    public Task(int id, String title, String description, LocalDate dueDate, Priority priority, boolean isCompleted) {
+    public Task() {}
+
+    public Task(String title, String description, LocalDate dueDate, Priority priority) {
         this.id = ++counter;
         this.title = title;
         this.description = description;
         this.dueDate = dueDate;
         this.priority = priority;
         this.isCompleted = false;
+    }
+
+    public static void setCounter(int value) {
+        counter = value;
     }
 
     public int getId() {
