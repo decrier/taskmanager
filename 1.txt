@@ -1,0 +1,354 @@
+покемона
+
+
+ChatGPT сказал:
+
+Думал на протяжении пары секунд
+Чтобы добавить поиск по типу (и даже расширить до подбора «сильных» и «слабых» покемонов), мы дополним наш API-слой и сервис новым функционалом, а в CLI — командой. Ниже шаги и примеры кода.
+
+1. Расширяем интерфейс PokemonApi
+В com.example.pokemon.api.PokemonApi добавим два метода:
+
+java
+Копировать
+Редактировать
+public interface PokemonApi {
+    Pokemon fetch(String nameOrId) throws IOException;
+    
+    /** Возвращает список имён всех покемонов данного типа */
+    List<String> fetchByType(String typeName) throws IOException;
+    
+    /** Возвращает объект с информацией о слабостях/силах типа */
+    TypeInfo fetchTypeInfo(String typeName) throws IOException;
+}
+2. Реализация HTTP-клиента
+В PokemonApiHttp (раньше PokemonApiAbrufer) реализуем новые методы, используя эндпоинт
+https://pokeapi.co/api/v2/type/{typeName}. Приведу сокращённый пример:
+
+java
+Копировать
+Редактировать
+public class PokemonApiHttp implements PokemonApi {
+    // уже есть client и gson …
+
+    @Override
+    public List<String> fetchByType(String typeName) throws IOException {
+        String url = "https://pokeapi.co/api/v2/type/" + typeName;
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
+        try {
+            var resp = client.send(req, BodyHandlers.ofString());
+            if (resp.statusCode() != 200) throw new IOException("Type not found");
+            // Распарсим JSON в модель TypeInfo:
+            TypeInfo info = gson.fromJson(resp.body(), TypeInfo.class);
+            // Извлечём список имён покемонов данного типа:
+            return info.getPokemon().stream()
+                       .map(TypeInfo.PokemonSlot::getPokemon)
+                       .map(TypeInfo.PokemonSlot.PokemonRef::getName)
+                       .collect(Collectors.toList());
+        } catch (InterruptedException e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public TypeInfo fetchTypeInfo(String typeName) throws IOException {
+        String url = "https://pokeapi.co/api/v2/type/" + typeName;
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
+        try {
+            var resp = client.send(req, BodyHandlers.ofString());
+            if (resp.statusCode() != 200) throw new IOException("Type not found");
+            return gson.fromJson(resp.body(), TypeInfo.class);
+        } catch (InterruptedException e) {
+            throw new IOException(e);
+        }
+    }
+}
+Модель TypeInfo
+В пакете model добавьте новый класс:
+
+java
+Копировать
+Редактировать
+package com.example.pokemon.model;
+
+import java.util.List;
+import java.util.Map;
+
+public class TypeInfo {
+    private DamageRelations damage_relations;
+    private List<PokemonSlot> pokemon;
+
+    public DamageRelations getDamageRelations() { return damage_relations; }
+    public List<PokemonSlot> getPokemon() { return pokemon; }
+
+    public static class DamageRelations {
+        private List<TypeRef> double_damage_from;
+        private List<TypeRef> double_damage_to;
+        // Можно добавить другие (half_damage_from, etc.)
+        public List<TypeRef> getDoubleDamageFrom() { return double_damage_from; }
+        public List<TypeRef> getDoubleDamageTo() { return double_damage_to; }
+    }
+
+    public static class TypeRef {
+        private String name;
+        public String getName() { return name; }
+    }
+
+    public static class PokemonSlot {
+        private PokemonRef pokemon;
+        public PokemonRef getPokemon() { return pokemon; }
+        public static class PokemonRef {
+            private String name;
+            public String getName() { return name; }
+        }
+    }
+}
+3. Сервисный слой: TeamService дополняем методами поиска
+java
+Копировать
+Редактировать
+public class TeamService {
+    // уже есть add, list, save, load …
+
+    /** Возвращает список имён покемонов данного типа */
+    public List<String> searchByType(String typeName) throws IOException {
+        return api.fetchByType(typeName);
+    }
+
+    /** Ищет типы, которые сильны против oneType, но слабы против anotherType */
+    public List<String> searchStrongWeak(String strongAgainst, String weakAgainst) throws IOException {
+        TypeInfo strongInfo = api.fetchTypeInfo(strongAgainst);
+        TypeInfo weakInfo   = api.fetchTypeInfo(weakAgainst);
+
+        // Покемоны, которым наносят двойной урон from strongAgainst
+        Set<String> strongSet = strongInfo.getDamageRelations().getDoubleDamageTo()
+                                           .stream().map(TypeInfo.TypeRef::getName)
+                                           .collect(Collectors.toSet());
+        // Покемоны, которым наносят двойной урон from weakAgainst
+        Set<String> weakSet   = weakInfo.getDamageRelations().getDoubleDamageTo()
+                                           .stream().map(TypeInfo.TypeRef::getName)
+                                           .collect(Collectors.toSet());
+
+        // Пересекаем: сильные против одного, но слабые против другого
+        return strongSet.stream()
+                        .filter(weakSet::contains)
+                        .collect(Collectors.toList());
+    }
+}
+Обратите внимание, что searchStrongWeak возвращает пересечение типов — то есть список типов покемонов, которые одновременно «double_damage_to» из обоих эндпоинтов. Если нужно список самих покемонов, дальше можно вызывать fetchByType(...) для каждого типа.
+
+4. CLI: команда type и matchup
+В ConsoleHandler (или CommandHandler) добавьте два новых пункта меню:
+
+java
+Копировать
+Редактировать
+case 6 -> {  // предположим «6» — поиск по типу
+    System.out.print("Geben Sie den Typ ein: ");
+    String type = scan.nextLine().trim().toLowerCase();
+    List<String> pokemons = teamService.searchByType(type);
+    System.out.println("Pokémon des Typs " + type + ":");
+    pokemons.forEach(System.out::println);
+}
+
+case 7 -> {  // «matchup» — поиск type strong vs weak
+    System.out.print("Stark gegen (type): ");
+    String strong = scan.nextLine().trim().toLowerCase();
+    System.out.print("Schwach gegen (type): ");
+    String weak = scan.nextLine().trim().toLowerCase();
+    List<String> types = teamService.searchStrongWeak(strong, weak);
+    System.out.println("Typen, die stark gegen " + strong +
+                       " und schwach gegen " + weak + " sind:");
+    types.forEach(System.out::println);
+}
+Не забудьте обновить меню:
+
+java
+Копировать
+Редактировать
+System.out.println("6. Nach Typ suchen");
+System.out.println("7. Matchup suchen (stark/schwach)");
+Итог
+API-слой — новые методы fetchByType и fetchTypeInfo.
+
+Модель — TypeInfo с полями damage_relations и списком pokemon.
+
+Сервис — методы searchByType и searchStrongWeak.
+
+CLI — команды type и matchup.
+
+Такой подход сохраняет слоистую архитектуру и вам не придётся переписывать существующую логику при добавлении UI-слоя или новых функций.
+
+
+
+
+
+
+Вы сказали:
+Второе задание: Приложение анализирует типы покемонов в команде. Необходимо рассчитать, против каких типов команда является сильной
+
+
+ChatGPT сказал:
+
+Думал на протяжении нескольких секунд
+Для того чтобы понять, против каких типов ваша команда сильна, нужно:
+
+Для каждого Pokémon в команде взять все его типы.
+
+Для каждого типа получить через API информацию о его «damage_relations.double_damage_to» — то есть список типов, которым он наносит двойной урон.
+
+Сложить (агрегировать) эту информацию по всей команде — например, посчитать, сколько покемонов в команде сильны против каждого целевого типа.
+
+Вывести итоговый список типов, отсортированный по убыванию «силы» (количества покемонов, у которых есть эффективность против этого типа).
+
+1. Добавим в TeamService метод анализа силы команды
+java
+Копировать
+Редактировать
+package com.example.pokemon.service;
+
+import com.example.pokemon.api.PokemonApi;
+import com.example.pokemon.model.TypeInfo;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class TeamService {
+    private final List<Pokemon> team = new ArrayList<>();
+    private final PokemonApi api;
+
+    public TeamService(PokemonApi api) {
+        this.api = api;
+    }
+
+    public void add(Pokemon p) {
+        team.add(p);
+    }
+
+    public List<Pokemon> list() {
+        return Collections.unmodifiableList(team);
+    }
+
+    // Новый метод: подсчёт «сил» команды
+    public Map<String, Integer> calculateTeamStrengths() throws IOException {
+        Map<String, Integer> strengthCount = new HashMap<>();
+
+        for (Pokemon p : team) {
+            // Каждый покемон может иметь 1–2 типа
+            for (var typeSlot : p.getTypes()) {
+                String typeName = typeSlot.getType().getName();
+                // Получаем damage_relations для этого типа
+                TypeInfo info = api.fetchTypeInfo(typeName);
+
+                // Список типов, которым этот type наносит двойной урон
+                List<String> strongAgainst = info.getDamageRelations()
+                                                 .getDoubleDamageTo()
+                                                 .stream()
+                                                 .map(TypeInfo.TypeRef::getName)
+                                                 .collect(Collectors.toList());
+
+                // Инкрементируем счётчик для каждого targetType
+                for (String target : strongAgainst) {
+                    strengthCount.merge(target, 1, Integer::sum);
+                }
+            }
+        }
+
+        return strengthCount;
+    }
+}
+strengthCount хранит, сколько покемонов (с учётом всех их типов) в команде эффективны против каждого целевого типа.
+
+Если один Pokémon имеет два типа, оба добавят «силу» для соответствующих целевых типов.
+
+2. Расширяем API-интерфейс
+В com.example.pokemon.api.PokemonApi должен быть метод
+
+java
+Копировать
+Редактировать
+TypeInfo fetchTypeInfo(String typeName) throws IOException;
+и его реализация в PokemonApiHttp (бывший Abrufer) уже умеет запрашивать https://pokeapi.co/api/v2/type/{typeName} и парсить его в TypeInfo.
+
+3. Добавляем команду в CLI
+В вашем ConsoleHandler (или CommandHandler) расширьте меню, например пунктом «8»:
+
+java
+Копировать
+Редактировать
+System.out.println("6. Nach Typ suchen");
+System.out.println("7. Matchup suchen");
+System.out.println("8. Team-Stärken analysieren");
+И в switch:
+
+java
+Копировать
+Редактировать
+case 8 -> {
+    try {
+        Map<String, Integer> strengths = teamService.calculateTeamStrengths();
+        if (strengths.isEmpty()) {
+            System.out.println("Dein Team ist leer.");
+        } else {
+            System.out.println("Gegen folgende Typen ist dein Team stark:");
+            // Сортируем по убыванию счётчика
+            strengths.entrySet().stream()
+                     .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
+                     .forEach(e -> 
+                         System.out.printf("  %s : %d Pokémon%n", 
+                                            capitalize(e.getKey()), e.getValue()));
+        }
+    } catch (IOException e) {
+        System.out.println("Fehler beim Abrufen der Typinformationen: " + e.getMessage());
+    }
+}
+4. Пример работы
+Предположим, в вашей команде два покемона:
+
+Charizard (Fire, Flying)
+
+Blastoise (Water)
+
+Тогда:
+
+Fire наносит двойной урон Grass, Ice, Bug, Steel
+
+Flying — двойной урон Grass, Fighting, Bug
+
+Water — двойной урон Fire, Ground, Rock
+
+Итоговый подсчёт strengthCount:
+
+Target Type	Count
+Grass	2
+Bug	2
+Ice	1
+Steel	1
+Fighting	1
+Fire	1
+Ground	1
+Rock	1
+
+Вывод:
+
+yaml
+Копировать
+Редактировать
+Gegen folgende Typen ist dein Team stark:
+  Grass : 2 Pokémon
+  Bug   : 2 Pokémon
+  Ice   : 1 Pokémon
+  Steel : 1 Pokémon
+  Fighting : 1 Pokémon
+  Fire  : 1 Pokémon
+  Ground: 1 Pokémon
+  Rock  : 1 Pokémon
+Зачем так делать?
+Модульность: логика анализа «силы» живёт в TeamService и не зависит от формата вывода (консоль, GUI, веб).
+
+Тестируемость: вы можете замокать PokemonApi.fetchTypeInfo() и проверить, что calculateTeamStrengths() правильно суммирует счётчики.
+
+Расширяемость: позже легко добавить метод для расчёта «слабостей» (использовать damage_relations.double_damage_from), или для более сложного мета-анализа.
+
+Таким образом, новое задание решается добавлением одного метода в сервис и одной ветки в CLI, без ломки остальной архитектуры.
